@@ -36,7 +36,7 @@
     },
   }
 
-  local state = machine.initialState           // state = 'initial'
+  local state = machine.initial_state           // state = 'initial'
   state = machine:transition(state, 'FETCH')   // state = 'loading'
   state = machine:transition(state, 'REJECT')  // state = 'failure'
   state = machine:transition(state, 'RETRY')   // state = 'loading'
@@ -75,7 +75,7 @@ function StateChart.print_table(t, indent)
   print('}')
 end
 
-function shallow_copy(orig)
+local function shallow_copy(orig)
   local orig_type = type(orig)
   local copy
   if orig_type == 'table' then
@@ -89,7 +89,7 @@ function shallow_copy(orig)
   return copy
 end
 
-function deep_copy(orig)
+local function deep_copy(orig)
   local orig_type = type(orig)
   local copy
   if orig_type == 'table' then
@@ -238,12 +238,7 @@ function AtomicConfig:transition(context, value, event)
     transition = self.always:eval(context, event)
   end
 
-  return {
-    value = value,
-    changed = false,
-    transition = transition,
-    actions = nil,
-  }
+  return {value = value, changed = false, transition = transition}
 end
 
 --[[ FinalConfig ///////////////////////////////////////////////////////////////
@@ -265,7 +260,7 @@ end
 function FinalConfig:transition(context, value, event)
   assert(value == nil or value == self.id,
          'unexpected final state value ' .. value)
-  return {value = value, changed = false, transition = nil, actions = nil}
+  return {value = value, changed = false, transition = nil}
 end
 
 --[[ CompoundConfig ////////////////////////////////////////////////////////////
@@ -297,30 +292,63 @@ function CompoundConfig:is_done(value)
   return self.states[id]:is_done(subvalue)
 end
 
-function CompoundConfig:transition(context, value, event)
-  local id, subvalue = get_subvalue(value)
-  local new_state = self.states[id]:transition(context, subvalue, event)
-
-  if new_state.transition then
-    local id = new_state.transition.target
-    local subvalue = self.states[id]:initial_value()
-    local new_value = to_value(id, subvalue)
-    -- todo: exit actions
-    -- todo: transition actions
-    -- todo: resolve transient states
-    -- todo: entry actions
-    -- todo: check for done
-    -- todo: history
-    return {value = new_value, changed = true, transition = nil, actions = nil}
+local function execute_actions(context, event, actions)
+  if not actions then
+    return
   end
 
-  if new_state.changed then
-    return {
-      value = to_value(id, new_state.value),
-      changed = true,
-      transition = nil,
-      actions = nil,
-    }
+  if type(actions) == 'function' then
+    actions(context, event)
+  else
+    for _, action in ipairs(actions) do
+      action(context, event)
+    end
+  end
+end
+
+local function execute_transition(context, event, exit, transition, enter)
+  execute_actions(context, event, exit)
+  execute_actions(context, event, transition)
+  execute_actions(context, event, enter)
+end
+
+function CompoundConfig:transition(context, value, event)
+  local prev_id, prev_subvalue = get_subvalue(value)
+  local prev_config = self.states[prev_id]
+  local next_state = prev_config:transition(context, prev_subvalue, event)
+
+  if next_state.transition then
+    local next_id = next_state.transition.target
+    local next_config = self.states[next_id]
+
+    execute_transition(context, event, prev_config.exit,
+                       next_state.transition.actions, next_config.enter)
+
+    while next_config.always do
+      next_state = next_config.always:eval(context, event)
+      if not next_state then
+        break
+      end
+
+      next_id = next_state.transition.target
+      prev_config, next_config = next_config, self.states[next_id]
+
+      execute_transition(context, event, prev_config.exit,
+                         next_state.transition.actions, next_config.enter)
+    end
+
+    local next_subvalue = next_config:initial_value()
+    local next_value = to_value(next_id, next_subvalue)
+    local transition = self.done and self:is_done(next_value) or nil
+
+    -- TODO: history
+    -- TODO: delays
+    return {value = next_value, changed = true, transition = transition}
+  end
+
+  if next_state.changed then
+    next_state.value = to_value(prev_id, next_state.value)
+    return next_state
   end
 
   return AtomicConfig.transition(self, context, value, event)
@@ -360,9 +388,10 @@ function ParallelConfig:transition(context, value, event)
     any_changed = any_changed or new_state.changed
   end
 
+  -- TODO: delays
   if any_changed then
-    -- todo: check for done
-    return {value = new_value, changed = true, transitions = nil, actions = nil}
+    local transition = self.done and self:is_done(new_value) or nil
+    return {value = new_value, changed = true, transition = transition}
   end
 
   return AtomicConfig.transition(self, context, value, event)
@@ -380,7 +409,7 @@ local HistoryConfig = AtomicConfig:clone{type = 'history'}
 
 function HistoryConfig:transition(context, value, event)
   -- TODO: get node to transition to
-  return {value = value, changed = false, transitions = nil, actions = nil}
+  return {value = value, changed = false, transitions = nil}
 end
 
 --[[ Config ////////////////////////////////////////////////////////////////////
@@ -442,38 +471,74 @@ end
 ]]
 local Machine = Object:clone()
 
+local function iter_flat(t)
+  if type(t) ~= 'table' or not t[1] then
+    return t
+  end
+
+  for _, v in ipairs(t) do
+    if type(v) == 'table' and v[1] then
+      iter_flat(v)
+    else
+      coroutine.yield(v)
+    end
+  end
+end
+
+local function flat(t)
+  return coroutine.wrap(function()
+    iter_flat(t)
+  end)
+end
+
 function Machine:transition(state, event)
-  local new_state = self.config:transition(state.context, state.value, event)
-  --[[
-    TODO:
-    - transient states?
-    - exit, transition, entry actions?
-    - delayed transitions?
-    - history?
-  ]]
-  return {context = state.context, value = new_state.value}
+  local next_context = deep_copy(state.context)
+  local next_state = self.config:transition(next_context, state.value, event)
+  next_state.context = next_context
+  return next_state
 end
 
 function StateChart.machine(config)
   config = build_config(config)
   local m = Machine:clone{
     config = config,
-    initialState = {
+    initial_state = {
       value = config:initial_value(),
-      context = config.context,
-      --[[
-        TODO:
-        - event = {type: 'init'},
-        - actions =
-        - activities =
-        - history
-        - meta
-        - done
-      ]]
+      context = deep_copy(config.context),
     },
   }
 
   return m
+end
+
+local Interpreter = Object:clone()
+
+function Interpreter:start(state)
+  self.state = state or machine.initial_state
+end
+
+function Interpreter:stop()
+  self.listeners = {}
+end
+
+function Interpreter:listen(listener)
+  table.insert(self.listeners, listener)
+end
+
+function Interpreter:next(event)
+  self.state = self.machine:transition(self.state, event)
+
+  if not self.state.changed then
+    return
+  end
+
+  for _, listener in ipairs(self.listeners) do
+    listener(self.state)
+  end
+end
+
+function StateChart.interpret(machine)
+  return Interpreter:clone{machine = machine, listeners = {}}
 end
 
 return StateChart
