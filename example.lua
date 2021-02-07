@@ -1,8 +1,3 @@
-# statechart
-Lua statechart library inspired by XState
-
-## Example
-```lua
 local StateChart = require 'statechart'
 
 local fetchMachine = StateChart.machine {
@@ -13,13 +8,28 @@ local fetchMachine = StateChart.machine {
   states = {
     idle = {
       events = {
-        FETCH = 'loading',
+        FETCH = {
+          target = 'loading',
+          actions = function()
+            print('idle -> loading')
+          end
+        },
       },
     },
     loading = {
       events = {
-        RESOLVE = 'success',
-        REJECT = 'failure',
+        RESOLVE = {
+          target = 'success',
+          actions = function()
+            print('loading -> success')
+          end
+        },
+        REJECT = {
+          target = 'failure',
+          actions = function()
+            print('loading -> failure')
+          end
+        },
       },
     },
     success = {},
@@ -28,8 +38,9 @@ local fetchMachine = StateChart.machine {
         RETRY = {
           target = 'loading',
           actions = function(context, event)
+            print('failure -> loading')
             context.retries = context.retries + 1
-          end,
+          end
         },
       },
     },
@@ -41,4 +52,3 @@ state = fetchMachine:transition(state, 'FETCH')   -- state = 'loading'
 state = fetchMachine:transition(state, 'REJECT')  -- state = 'failure'
 state = fetchMachine:transition(state, 'RETRY')   -- state = 'loading'
 state = fetchMachine:transition(state, 'RESOLVE') -- state = 'success'
-```

@@ -1,0 +1,7 @@
+{
+    "lua.format.singleQuote": true,
+    "lua.format.lineWidth": 80,
+    "lua.format.indentCount": 2,
+    "lua.luacheckPath": "/opt/homebrew/bin/luacheck",
+    "lua.targetVersion": "5.3"
+}

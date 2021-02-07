@@ -157,14 +157,14 @@ end
 -- @return A Transition or MultiTransition
 local function build_transition(cfg)
   if type(cfg) == 'string' then
-    return Transition:clone{target = cfg}
+    return Transition:clone {target = cfg}
   elseif type(cfg) == 'table' then
     if cfg[1] then
       local transitions = {}
       for _, subcfg in ipairs(cfg) do
         table.insert(transitions, Transition:clone(subcfg))
       end
-      return MultiTransition:clone{transitions = transitions}
+      return MultiTransition:clone {transitions = transitions}
     else
       return Transition:clone(cfg)
     end
@@ -179,7 +179,7 @@ end
   A state config is an immutable command object that is used to find the next
   state for a given context and current state.
 ]]
-local AbstractConfig = Object:clone{}
+local AbstractConfig = Object:clone {}
 
 -- Get the initial value for the state config
 function AbstractConfig:initial_value()
@@ -210,7 +210,7 @@ end
   Atomic states respond to events with transitions that cause higher-level
   states to change their internal state.
 ]]
-local AtomicConfig = AbstractConfig:clone{type = 'atomic'}
+local AtomicConfig = AbstractConfig:clone {type = 'atomic'}
 
 -- An atomic state has no initial state value
 function AtomicConfig:initial_value()
@@ -225,8 +225,10 @@ end
 -- An atomic state can only ever return transitions that cause higher-level
 -- states to change
 function AtomicConfig:transition(context, value, event)
-  assert(value == nil or value == self.id,
-         'unexpected atomic state value ' .. tostring(value))
+  assert(
+    value == nil or value == self.id,
+    'unexpected atomic state value ' .. tostring(value)
+  )
   local transition = nil
 
   if self.events then
@@ -247,7 +249,7 @@ end
 
   Final states have no internal state and never respond to events.
 ]]
-local FinalConfig = AtomicConfig:clone{type = 'final'}
+local FinalConfig = AtomicConfig:clone {type = 'final'}
 
 -- A final state is always done
 function FinalConfig:is_done(value)
@@ -256,17 +258,19 @@ end
 
 -- A final state does not respond to events and does not return transitions.
 -- Once a higher-level state has reached its final state, it should no longer
--- transition internally. 
+-- transition internally.
 function FinalConfig:transition(context, value, event)
-  assert(value == nil or value == self.id,
-         'unexpected final state value ' .. value)
+  assert(
+    value == nil or value == self.id,
+    'unexpected final state value ' .. value
+  )
   return {value = value, changed = false, transition = nil}
 end
 
 --[[ CompoundConfig ////////////////////////////////////////////////////////////
   A compound state is in one internal state at a time.
 ]]
-local CompoundConfig = AtomicConfig:clone{type = 'compound'}
+local CompoundConfig = AtomicConfig:clone {type = 'compound'}
 
 local function to_value(id, obj)
   return obj and {[id] = obj} or id
@@ -321,8 +325,13 @@ function CompoundConfig:transition(context, value, event)
     local next_id = next_state.transition.target
     local next_config = self.states[next_id]
 
-    execute_transition(context, event, prev_config.exit,
-                       next_state.transition.actions, next_config.enter)
+    execute_transition(
+      context,
+      event,
+      prev_config.exit,
+      next_state.transition.actions,
+      next_config.enter
+    )
 
     while next_config.always do
       next_state = next_config.always:eval(context, event)
@@ -333,8 +342,13 @@ function CompoundConfig:transition(context, value, event)
       next_id = next_state.transition.target
       prev_config, next_config = next_config, self.states[next_id]
 
-      execute_transition(context, event, prev_config.exit,
-                         next_state.transition.actions, next_config.enter)
+      execute_transition(
+        context,
+        event,
+        prev_config.exit,
+        next_state.transition.actions,
+        next_config.enter
+      )
     end
 
     local next_subvalue = next_config:initial_value()
@@ -358,7 +372,7 @@ end
   A parallel state can be in multiple internal states simulaneously. Internal
   states are isolated from one another.
 ]]
-local ParallelConfig = AtomicConfig:clone{type = 'parallel'}
+local ParallelConfig = AtomicConfig:clone {type = 'parallel'}
 
 function ParallelConfig:initial_value()
   local values = {}
@@ -402,10 +416,10 @@ end
   history state is entered, it immediately transitions to the most recent state.
 
   A history state can be either shallow or deep. A shallow history will only
-  track the most recent top-level state. A deep history will track the most 
+  track the most recent top-level state. A deep history will track the most
   recent top-level state and all of its substates.
 ]]
-local HistoryConfig = AtomicConfig:clone{type = 'history'}
+local HistoryConfig = AtomicConfig:clone {type = 'history'}
 
 function HistoryConfig:transition(context, value, event)
   -- TODO: get node to transition to
@@ -420,7 +434,7 @@ CONFIG_TYPES = {
   [FinalConfig.type] = FinalConfig,
   [CompoundConfig.type] = CompoundConfig,
   [ParallelConfig.type] = ParallelConfig,
-  [HistoryConfig.type] = HistoryConfig,
+  [HistoryConfig.type] = HistoryConfig
 }
 
 local function get_config_type(cfg)
@@ -486,9 +500,11 @@ local function iter_flat(t)
 end
 
 local function flat(t)
-  return coroutine.wrap(function()
-    iter_flat(t)
-  end)
+  return coroutine.wrap(
+    function()
+      iter_flat(t)
+    end
+  )
 end
 
 function Machine:transition(state, event)
@@ -500,12 +516,13 @@ end
 
 function StateChart.machine(config)
   config = build_config(config)
-  local m = Machine:clone{
+  local m =
+    Machine:clone {
     config = config,
     initial_state = {
       value = config:initial_value(),
-      context = deep_copy(config.context),
-    },
+      context = deep_copy(config.context)
+    }
   }
 
   return m
@@ -538,7 +555,7 @@ function Interpreter:next(event)
 end
 
 function StateChart.interpret(machine)
-  return Interpreter:clone{machine = machine, listeners = {}}
+  return Interpreter:clone {machine = machine, listeners = {}}
 end
 
 return StateChart
